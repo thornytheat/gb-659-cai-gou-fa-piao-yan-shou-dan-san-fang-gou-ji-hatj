@@ -1,27 +1,116 @@
 {% extends "base.html" %}
 {% block content %}
+{% set balanced = snapshots | selectattr("reconciled") | list | length %}
+{% set open_count = snapshots | map(attribute="performance") | selectattr("open", "ne", "0") | list | length %}
 <section class="kpis">
-  <div class="kpi"><b>差异项</b><strong>12</strong><small>条</small></div>
-  <div class="kpi"><b>通过</b><strong>10</strong><small>条</small></div>
-  <div class="kpi"><b>隔离</b><strong>3</strong><small>条</small></div>
-  <div class="kpi"><b>规则版</b><strong>1.3</strong><small>v</small></div>
+  <div class="kpi"><b>业务键</b><strong>{{ snapshots | length }}</strong><small>个</small></div>
+  <div class="kpi"><b>双账勾稽</b><strong>{{ balanced }}</strong><small>个通过</small></div>
+  <div class="kpi"><b>待收未结</b><strong>{{ open_count }}</strong><small>个</small></div>
+  <div class="kpi"><b>规则版</b><strong>2.0</strong><small>v</small></div>
 </section>
 <div class="grid grid--quad">
   <section class="panel">
-    <div class="panel__head"><h2>数量勾稽</h2><span class="state state--ok">通过</span></div>
+    <div class="panel__head"><h2>双账余额</h2><span class="state state--ok">履约 ≠ 实存，分开核对</span></div>
     <div class="panel__body panel__body--scroll">
-      <table class="ledger"><thead><tr><th>序号</th><th>业务键</th><th>状态</th><th class="num">值</th></tr></thead>
-      <tbody>{% for row in rows %}<tr><td class="num">{{ loop.index }}</td><td>{{ row.key }}</td><td>{{ row.status }}</td><td class="num">{{ row.value }}</td></tr>{% endfor %}</tbody></table>
+      <table class="ledger">
+        <thead><tr><th>业务键</th><th>版本</th><th class="num">订单</th><th class="num">验收</th><th class="num">退货</th><th class="num">待收货</th><th class="num">盘亏</th><th class="num">找回</th><th class="num">未找回</th><th class="num">实存</th><th>勾稽</th></tr></thead>
+        <tbody>
+        {% for item in snapshots %}
+          {% set p = item.performance %}{% set s = item.physical %}
+          <tr>
+            <td>{{ item.business_key }}</td>
+            <td class="num">{{ item.version }}</td>
+            <td class="num">{{ p.ordered }}</td>
+            <td class="num">{{ p.accepted }}</td>
+            <td class="num">{{ p.returned }}</td>
+            <td class="num">{{ p.open }}</td>
+            <td class="num">{{ s.shrinkage }}</td>
+            <td class="num">{{ s.recovered }}</td>
+            <td class="num">{{ s.unrecovered }}</td>
+            <td class="num">{{ s.on_hand }}</td>
+            <td>{{ "通过" if item.reconciled else "差异" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="11">暂无数量记录，先录入一笔订单。</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
     </div>
   </section>
-  <section class="panel panel--evidence">
-    <div class="panel__head"><h2>证据</h2><span class="panel__meta">4 条</span></div>
-    <div class="panel__body"><div class="evidence"><b>RUN-659-3</b><span>LINE 4</span><code>/api/quantity/match</code></div><pre id="result">等待运行</pre></div>
+  <section class="panel">
+    <div class="panel__head"><h2>录入数量事件</h2><span class="state">订单 / 验收 / 退货 / 盘亏 / 找回</span></div>
+    <div class="panel__body">
+      <form id="quantity-form" class="qform">
+        <label>业务键<input name="business_key" required placeholder="SKU-A"></label>
+        <label>事件编号<input name="event_id" required placeholder="GR-20261116-1"></label>
+        <label>类型
+          <select name="kind">
+            {% for item in kinds %}<option value="{{ item.kind }}">{{ item.label }} · {{ item.kind }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>数量<input name="quantity" required inputmode="decimal" placeholder="1"></label>
+        <label>预期版本 <small>（找回必填）</small><input name="expected_version" inputmode="numeric" placeholder="当前版本"></label>
+        <button class="btn btn--primary" type="submit">写入事件</button>
+      </form>
+      <p class="hint">盘亏只扣实存，不重开待收货；找回冲回原盘亏且不超过未找回数量；真实退货才重开待收货。同一事件编号重放不会重复扣补。</p>
+      <pre id="result">等待运行</pre>
+    </div>
   </section>
   <section class="panel panel--status">
-    <div class="panel__head"><h2>原因分布</h2><span class="panel__meta">3 类</span></div>
-    <div class="panel__body"><div class="bar"><i style="width:67%"></i></div><div class="legend"><span>采纳 12</span><span>隔离 3</span></div></div>
+    <div class="panel__head"><h2>两套余额来源</h2><span class="panel__meta">事件编号可追溯</span></div>
+    <div class="panel__body panel__body--scroll">
+      {% for item in snapshots %}
+      <div class="source">
+        <b>{{ item.business_key }} · v{{ item.version }} · 来源{{ "一致" if item.sources.balanced else "不一致" }}</b>
+        <div class="source__cols">
+          <div>
+            <h3>履约账 · {{ item.performance.formula }}</h3>
+            <p>待收货 <strong>{{ item.performance.open }}</strong> · 状态 {{ item.performance.status }}</p>
+            <ul>
+              {% for kind, summary in item.performance.sources.items() %}
+              <li>{{ kind }} × {{ summary.event_count }} = {{ summary.quantity }}</li>
+              {% endfor %}
+            </ul>
+            <ul>{% for event in item.sources.events if event.source in ("performance", "both") %}<li>{{ event.event_id }} · {{ event.kind }} · {{ event.quantity }}</li>{% endfor %}</ul>
+          </div>
+          <div>
+            <h3>实存账 · {{ item.physical.formula }}</h3>
+            <p>实存 <strong>{{ item.physical.on_hand }}</strong> · 未找回 {{ item.physical.unrecovered }} · 状态 {{ item.physical.status }}</p>
+            <ul>
+              {% for kind, summary in item.physical.sources.items() %}
+              <li>{{ kind }} × {{ summary.event_count }} = {{ summary.quantity }}</li>
+              {% endfor %}
+            </ul>
+            <ul>{% for event in item.sources.events if event.source in ("physical", "both") %}<li>{{ event.event_id }} · {{ event.kind }} · {{ event.quantity }}</li>{% endfor %}</ul>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <p class="hint">录入事件后在此核对两套余额的来源。</p>
+      {% endfor %}
+    </div>
   </section>
 </div>
 {% endblock %}
-
+{% block scripts %}
+<script>
+const form = document.querySelector("#quantity-form");
+const out = document.querySelector("#result");
+const feedback = document.querySelector("#feedback");
+form?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = Object.fromEntries(new FormData(form).entries());
+  if(!data.expected_version) delete data.expected_version;
+  feedback.textContent = "写入中";
+  try{
+    const response = await fetch("/api/quantity/events", {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(data)});
+    const body = await response.json();
+    if(!response.ok) throw new Error(body.detail?.message || "请求失败");
+    out.textContent = JSON.stringify(body, null, 2);
+    feedback.textContent = body.replayed ? "事件已存在，未重复记账" : "已写入";
+    form.reset();
+    window.setTimeout(() => window.location.reload(), 400);
+  }catch(error){ out.textContent = error.message; feedback.textContent = "失败，可修正后重试"; }
+});
+</script>
+{% endblock %}

@@ -12,7 +12,7 @@ docker compose up --build
 
 - M1 单据采信：页面 /documents，接口 /api/documents/import
 - M2 主数据映射：页面 /master，接口 /api/master/resolve
-- M3 数量勾稽：页面 /quantity，接口 /api/quantity/match
+- M3 数量勾稽：页面 /quantity，接口 /api/quantity/events（录入事件）、/api/quantity/ledger（双账列表）
 - M4 税额核验：页面 /tax，接口 /api/tax/check
 - M5 多对多匹配：页面 /matching，接口 /api/matches/solve
 - M6 差异批次：页面 /batches，接口 /api/reconcile

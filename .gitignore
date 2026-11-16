@@ -22,6 +22,7 @@ out/
 .parcel-cache/
 coverage/
 __pycache__/
+data/
 *.pyc
 .venv/
 venv/
